@@ -16,6 +16,7 @@
 ## 环境要求
 
 - FnNAS / 飞牛 NAS，已安装 Ollama 应用
+- **须使用 root 权限运行**（写入应用安装目录、修改 `service-setup`、关闭进程等操作需要 root）
 - 默认安装路径：`/vol1/@appcenter/ai_installer`（也支持手动指定）
 - 需要 `curl`、`tar`（支持 `--zstd`）、`bash`
 - 升级 OpenWebUI 需要已存在 `{安装目录}/open-webui/bin/python3`
@@ -24,8 +25,8 @@
 
 ```bash
 cd /path/to/upgrade-ollama
-chmod +x upgrade-ollama.sh
-./upgrade-ollama.sh
+sudo chmod +x upgrade-ollama.sh
+sudo ./upgrade-ollama.sh
 ```
 
 首次运行按提示逐步选择；确认后会将配置保存到 `.upgrade-ollama.conf`。再次运行时可选择加载配置直接执行。
@@ -111,6 +112,7 @@ CPU 版选「否」（不会出现 ROCm 选项），OpenWebUI 选「是」。不
 
 ## 注意事项
 
+- **必须使用 root 运行**，普通用户会因权限不足导致写入安装目录、修改 `/var/apps/ai_installer/cmd/service-setup` 或关闭进程失败
 - 升级 Ollama 时会清空并重建 `{安装目录}/ollama`，建议开启备份
 - `open-webui` 备份体积较大，跨磁盘复制可能耗时较长，请耐心等待
 - 修改 `service-setup` 前会自动备份到 `backup/`
