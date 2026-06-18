@@ -39,12 +39,12 @@ sudo ./upgrade-ollama.sh
 | 2. 代理 | 是否通过 ghproxy 加速 GitHub 下载 |
 | 3. 版本 | 列出最新 10 个版本，回车默认选最新版 |
 | 4. 安装组件 | 先选 CPU/NVIDIA 版；若选「是」，可再选 ROCm 版（AMD GPU 加速，不可单独安装） |
-| 5. OLLAMA_HOST | 改为 `0.0.0.0:11434` 或 `127.0.0.1:11434`，或不修改 |
+| 5. service-setup | 修改 `OLLAMA_HOST`；可选开启/关闭 `OLLAMA_IGPU_ENABLE`（核显加速） |
 | 6. OpenWebUI | 是否升级；可选 **在线安装** 或 **先下载再安装（离线，可复用本地包）** |
-| 7. 备份 | 是否备份到脚本目录下 `backup/` |
+| 7. 备份 | 是否备份 `ollama` / `open-webui`；是否备份 `service-setup` |
 | 8. 清理 | 是否删除已下载的安装包 |
 
-至少需选择一项升级操作（Ollama 组件、OpenWebUI 或 OLLAMA_HOST 修改）。
+至少需选择一项升级操作（Ollama 组件、OpenWebUI、`OLLAMA_HOST` 或核显加速修改）。
 
 ## 升级流程
 
@@ -52,10 +52,10 @@ sudo ./upgrade-ollama.sh
 
 1. **下载** — 安装包保存到 `download/`（ollama 与 open-webui 分包存放）
 2. **关闭进程** — 安装包下载完成后再停止 ollama、open-webui
-3. **备份** — 若启用，将 `ollama`、`open-webui` 复制到 `backup/`（仅备份本次涉及升级的目录）
+3. **备份** — 若启用，将 `ollama`、`open-webui` 复制到 `backup/`；`service-setup` 仅在首次修改前备份一次
 4. **解压** — 解压到 `{安装目录}/ollama`（CPU 包提供主程序，ROCm 包补充 `lib/ollama/rocm`）
-5. **修改 OLLAMA_HOST** — 编辑 `/var/apps/ai_installer/cmd/service-setup`
-6. **升级 OpenWebUI** — 从本地 pip 包安装并在 `service-setup` 中添加 RAG 嵌入配置（若尚未存在）
+5. **修改 OLLAMA_HOST / 核显加速** — 编辑 `/var/apps/ai_installer/cmd/service-setup`（可选）
+6. **升级 OpenWebUI** — 从本地或在线 pip 安装，添加 RAG 嵌入配置（若尚未存在）
 7. **清理** — 可选删除下载目录
 
 ## 目录结构
@@ -115,5 +115,5 @@ CPU 版选「否」（不会出现 ROCm 选项），OpenWebUI 选「是」。不
 - **必须使用 root 运行**，普通用户会因权限不足导致写入安装目录、修改 `/var/apps/ai_installer/cmd/service-setup` 或关闭进程失败
 - 升级 Ollama 时会清空并重建 `{安装目录}/ollama`，建议开启备份
 - `open-webui` 备份体积较大，跨磁盘复制可能耗时较长，请耐心等待
-- 修改 `service-setup` 前会自动备份到 `backup/`
+- 修改 `service-setup` 前可选备份到 `backup/` 目录
 - 加载配置文件并确认后，将跳过交互步骤直接执行

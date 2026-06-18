@@ -84,6 +84,32 @@ backup_to_script_dir() {
     fi
 }
 
+# 备份 service-setup（修改前仅备份一次）
+backup_service_setup_if_enabled() {
+    if [ "${do_backup_service_setup:-n}" != "y" ]; then
+        return 0
+    fi
+    if [ "${SERVICE_SETUP_BACKED_UP:-0}" -eq 1 ]; then
+        return 0
+    fi
+    if [ ! -f "$SERVICE_SETUP" ]; then
+        echo "⚠️  跳过备份（文件不存在）: $SERVICE_SETUP"
+        return 1
+    fi
+    mkdir -p "$BACKUP_SESSION"
+    cp -a "$SERVICE_SETUP" "${BACKUP_SESSION}/service-setup"
+    SERVICE_SETUP_BACKED_UP=1
+    echo "📦 已备份 service-setup: ${BACKUP_SESSION}/service-setup"
+}
+
+backup_service_setup_before_modify() {
+    if [ "$modify_ollama_host" != "n" ] \
+        || [ "${modify_ollama_igpu:-n}" = "y" ] \
+        || [ "$upgrade_owui" = "y" ]; then
+        backup_service_setup_if_enabled
+    fi
+}
+
 # 解压到目标目录（兼容不支持 --strip-components 的 tar）
 extract_pkg() {
     local pkg="$1"
@@ -126,8 +152,6 @@ apply_ollama_host() {
         return 1
     fi
 
-    mkdir -p "$BACKUP_SESSION"
-    cp -a "$SERVICE_SETUP" "${BACKUP_SESSION}/service-setup"
     sed -i "s|^export OLLAMA_HOST=.*|export OLLAMA_HOST=\"${target}\"|" "$SERVICE_SETUP"
     echo "✅ OLLAMA_HOST 已改为: ${target}"
 }
@@ -151,8 +175,6 @@ apply_rag_embedding() {
         return 0
     fi
 
-    mkdir -p "$BACKUP_SESSION"
-    cp -a "$SERVICE_SETUP" "${BACKUP_SESSION}/service-setup"
     local tmp="${SERVICE_SETUP}.tmp.$$"
     while IFS= read -r line || [ -n "$line" ]; do
         if [[ "$line" == SERVICE_COMMAND=* ]]; then
@@ -163,6 +185,31 @@ apply_rag_embedding() {
     done < "$SERVICE_SETUP" > "$tmp"
     mv "$tmp" "$SERVICE_SETUP"
     echo "✅ 已添加 RAG 嵌入配置"
+}
+
+# 设置 Ollama 核显加速（OLLAMA_IGPU_ENABLE：0=关闭，1=开启）
+apply_ollama_igpu() {
+    local enable="$1"
+
+    if [ ! -f "$SERVICE_SETUP" ]; then
+        echo "❌ 文件不存在: $SERVICE_SETUP"
+        return 1
+    fi
+    if ! grep -qE '^export OLLAMA_IGPU_ENABLE=' "$SERVICE_SETUP"; then
+        echo "ℹ️  未找到 OLLAMA_IGPU_ENABLE 配置，跳过"
+        return 0
+    fi
+    if grep -qE "^export OLLAMA_IGPU_ENABLE=${enable}\$" "$SERVICE_SETUP"; then
+        echo "ℹ️  OLLAMA_IGPU_ENABLE 已是 ${enable}，跳过"
+        return 0
+    fi
+
+    sed -i "s|^export OLLAMA_IGPU_ENABLE=.*|export OLLAMA_IGPU_ENABLE=${enable}|" "$SERVICE_SETUP"
+    if [ "$enable" = "1" ]; then
+        echo "✅ 已开启 OLLAMA_IGPU_ENABLE"
+    else
+        echo "✅ 已关闭 OLLAMA_IGPU_ENABLE"
+    fi
 }
 
 collect_pids() {
@@ -322,9 +369,12 @@ upgrade_owui=${upgrade_owui}
 owui_install_mode=${owui_install_mode}
 reuse_owui_pkg=${reuse_owui_pkg}
 do_backup=${do_backup}
+do_backup_service_setup=${do_backup_service_setup}
 clean_ollama_pkg=${clean_ollama_pkg}
 clean_owui_pkg=${clean_owui_pkg}
 modify_ollama_host=${modify_ollama_host}
+modify_ollama_igpu=${modify_ollama_igpu}
+enable_ollama_igpu=${enable_ollama_igpu}
 EOF
     echo "💾 配置已保存: $CONFIG_FILE"
 }
@@ -336,6 +386,9 @@ load_config() {
     clean_owui_pkg="${clean_owui_pkg:-${clean_temp:-n}}"
     reuse_owui_pkg="${reuse_owui_pkg:-n}"
     owui_install_mode="${owui_install_mode:-local}"
+    modify_ollama_igpu="${modify_ollama_igpu:-n}"
+    enable_ollama_igpu="${enable_ollama_igpu:-n}"
+    do_backup_service_setup="${do_backup_service_setup:-y}"
 }
 
 show_config_summary() {
@@ -360,6 +413,15 @@ show_config_summary() {
     else
         echo "OLLAMA_HOST: 不修改"
     fi
+    if [ "${modify_ollama_igpu:-n}" = "y" ]; then
+        if [ "$enable_ollama_igpu" = "y" ]; then
+            echo "核显加速:    开启"
+        else
+            echo "核显加速:    关闭"
+        fi
+    else
+        echo "核显加速:    不修改"
+    fi
     echo "升级OWUI:    $([ "$upgrade_owui" = "y" ] && echo "是" || echo "否")"
     if [ "$upgrade_owui" = "y" ]; then
         if [ "${owui_install_mode:-local}" = "online" ]; then
@@ -370,6 +432,9 @@ show_config_summary() {
         fi
     fi
     echo "备份:        $([ "${do_backup:-y}" = "y" ] && echo "是" || echo "否")"
+    if [ -f "$SERVICE_SETUP" ] || [ "${do_backup_service_setup:-y}" = "y" ]; then
+        echo "  └ service-setup: $([ "${do_backup_service_setup:-y}" = "y" ] && echo "是" || echo "否")"
+    fi
     if [ $do_cpu -eq 1 ] || [ $do_rocm -eq 1 ]; then
         echo "清理ollama:  $([ "${clean_ollama_pkg:-y}" = "y" ] && echo "是" || echo "否")"
     fi
@@ -401,7 +466,7 @@ if [ -f "$CONFIG_FILE" ]; then
             echo "❌ 配置中的安装目录不存在: $BASE_DIR"
             exit 1
         fi
-        if [ $do_cpu -eq 0 ] && [ $do_rocm -eq 0 ] && [ "$upgrade_owui" != "y" ] && [ "${modify_ollama_host:-n}" = "n" ]; then
+        if [ $do_cpu -eq 0 ] && [ $do_rocm -eq 0 ] && [ "$upgrade_owui" != "y" ] && [ "${modify_ollama_host:-n}" = "n" ] && [ "${modify_ollama_igpu:-n}" != "y" ]; then
             echo "❌ 配置中未选择任何升级操作"
             exit 1
         fi
@@ -502,6 +567,21 @@ if [ $load_config_mode -eq 0 ]; then
         echo "⚠️  未找到 $SERVICE_SETUP，跳过"
     fi
 
+    modify_ollama_igpu="n"
+    enable_ollama_igpu="n"
+    if [ -f "$SERVICE_SETUP" ]; then
+        echo -e "\n  Ollama 核显加速 (OLLAMA_IGPU_ENABLE)"
+        echo "  0) 不修改"
+        echo "  1) 关闭"
+        echo "  2) 开启"
+        read -p "  请选择 [默认1]: " igpu_choice
+        [ -z "$igpu_choice" ] && igpu_choice=1
+        case "$igpu_choice" in
+            1) modify_ollama_igpu="y"; enable_ollama_igpu="n" ;;
+            2) modify_ollama_igpu="y"; enable_ollama_igpu="y" ;;
+        esac
+    fi
+
     # 6. 升级 OpenWebUI
     echo -e "\n[6/8] 是否升级 OpenWebUI"
     upgrade_owui="n"
@@ -529,7 +609,11 @@ if [ $load_config_mode -eq 0 ]; then
     # 7. 备份
     echo -e "\n[7/8] 升级前是否备份到 ${BACKUP_DIR}？"
     do_backup="n"
-    confirm "备份" "y" && do_backup="y"
+    do_backup_service_setup="n"
+    confirm "备份 ollama / open-webui" "y" && do_backup="y"
+    if [ -f "$SERVICE_SETUP" ]; then
+        confirm "备份 service-setup (${SERVICE_SETUP})" "y" && do_backup_service_setup="y"
+    fi
 
     # 8. 清理
     echo -e "\n[8/8] 安装后清理"
@@ -544,7 +628,10 @@ if [ $load_config_mode -eq 0 ]; then
 fi
 
 modify_ollama_host="${modify_ollama_host:-n}"
+modify_ollama_igpu="${modify_ollama_igpu:-n}"
+enable_ollama_igpu="${enable_ollama_igpu:-n}"
 do_backup="${do_backup:-y}"
+do_backup_service_setup="${do_backup_service_setup:-y}"
 clean_ollama_pkg="${clean_ollama_pkg:-n}"
 clean_owui_pkg="${clean_owui_pkg:-n}"
 reuse_owui_pkg="${reuse_owui_pkg:-n}"
@@ -553,7 +640,7 @@ owui_install_mode="${owui_install_mode:-local}"
 normalize_rocm_option
 normalize_owui_install_mode
 
-if [ $do_cpu -eq 0 ] && [ $do_rocm -eq 0 ] && [ "$upgrade_owui" != "y" ] && [ "$modify_ollama_host" = "n" ]; then
+if [ $do_cpu -eq 0 ] && [ $do_rocm -eq 0 ] && [ "$upgrade_owui" != "y" ] && [ "$modify_ollama_host" = "n" ] && [ "${modify_ollama_igpu:-n}" != "y" ]; then
     echo "❌ 未选择任何升级操作"
     exit 1
 fi
@@ -663,6 +750,9 @@ if [ $do_cpu -eq 1 ] || [ $do_rocm -eq 1 ]; then
     fi
 fi
 
+# 修改 service-setup 前备份（仅首次）
+backup_service_setup_before_modify
+
 # 4. 修改 OLLAMA_HOST
 if [ "$modify_ollama_host" != "n" ]; then
     echo -e "\n▶️  修改 OLLAMA_HOST"
@@ -684,6 +774,16 @@ if [ "$upgrade_owui" = "y" ]; then
     fi
     echo -e "\n▶️  配置 RAG 嵌入"
     apply_rag_embedding || true
+fi
+
+# 配置 Ollama 核显加速（在环境块之后执行，用户选择优先）
+if [ "${modify_ollama_igpu:-n}" = "y" ]; then
+    echo -e "\n▶️  配置 Ollama 核显加速"
+    if [ "$enable_ollama_igpu" = "y" ]; then
+        apply_ollama_igpu 1 || true
+    else
+        apply_ollama_igpu 0 || true
+    fi
 fi
 
 # 清理
